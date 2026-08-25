@@ -2,8 +2,9 @@ name: Sync fork with upstream
 
 on:
   schedule:
-    - cron: '0 2 * * *'    # 每天 UTC 02:00 跑一次，按需调整
-  workflow_dispatch:        # 允许在 Actions 页面手动点击运行
+    - cron: '0 10 * * *'
+      timezone: 'Asia/Shanghai'   # 每天北京时间 10:00 跑一次，按需调整
+  workflow_dispatch:              # 允许在 Actions 页面手动点击运行
 
 permissions:
   contents: write
@@ -16,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0     # 拉取完整历史，浅克隆会导致合并失败
+          fetch-depth: 0
 
       - name: Add upstream remote
         run: git remote add upstream https://github.com/readest/readest.git
@@ -24,8 +25,8 @@ jobs:
       - name: Fetch upstream
         run: git fetch upstream
 
-      - name: Fast-forward merge
-        run: git merge upstream/main --ff-only
+      - name: Merge upstream into main
+        run: git merge upstream/main --no-edit
 
       - name: Push to fork
         run: git push origin main
