@@ -459,6 +459,23 @@ export class TTSController extends EventTarget {
   #attachNarrationSource(book: FoliateView['book']): void {
     if (this.#usesPairedAudiobook(book) && this.#pairedAudiobook && this.appService) {
       const narrator = this.#pairedAudiobook.narrator;
+      const source = this.#pairedAudiobook.source;
+      if (source?.kind === 'audiobookshelf') {
+        // Streamed from the server: the tracks resolve to URLs carrying the
+        // live token, and there is no blob to fall back to. Loaded on demand
+        // so the server store (and its settings graph) stays out of this
+        // module's imports for every other book.
+        this.ttsMediaOverlayClient.attachSource({
+          ...(narrator ? { narrator } : {}),
+          textHighlight: false,
+          resolveTracks: async () =>
+            (await import('@/services/audiobook/absPairing')).absNarrationTracks(source),
+          loadBlob: async () => {
+            throw new Error('Audiobookshelf server not found');
+          },
+        });
+        return;
+      }
       this.ttsMediaOverlayClient.attachSource({
         ...(narrator ? { narrator } : {}),
         textHighlight: false,
@@ -1654,7 +1671,14 @@ export class TTSController extends EventTarget {
             ? (this.#getCurrentPlaybackRange() ?? range)
             : range;
         const cfi = this.view.getCFI(this.#ttsSectionIndex, playbackRange);
-        this.dispatchEvent(new CustomEvent('tts-highlight-mark', { detail: { cfi } }));
+        // A chapter-only pairing highlights a one-character reading dot, but the
+        // view needs the whole sounding sentence to know where the page cuts it
+        // off (followSentenceAcrossPages). Carry that range's cfi too; it is the
+        // mark range itself when the client highlights the full text, so no
+        // extra work for synthesized voices or exact Media Overlays.
+        const sentenceCfi =
+          playbackRange === range ? cfi : this.view.getCFI(this.#ttsSectionIndex, range);
+        this.dispatchEvent(new CustomEvent('tts-highlight-mark', { detail: { cfi, sentenceCfi } }));
         this.#dispatchPosition(cfi, 'sentence');
       } catch {
         this.#suppressMarkHighlight = false;
