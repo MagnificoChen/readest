@@ -1,10 +1,8 @@
 name: Sync fork with upstream
-
 on:
   schedule:
-    - cron: '0 10 * * *'
-      timezone: 'Asia/Shanghai'   # 每天北京时间 10:00 跑一次，按需调整
-  workflow_dispatch:              # 允许在 Actions 页面手动点击运行
+    - cron: '0 2 * * *'   # UTC 2:00 = 北京时间(UTC+8) 10:00
+  workflow_dispatch:      # 允许在 Actions 页面手动点击运行
 
 permissions:
   contents: write
@@ -18,6 +16,11 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Add upstream remote
         run: git remote add upstream https://github.com/readest/readest.git
