@@ -44,6 +44,7 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
+    "useLocalToolsDir": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -160,7 +161,7 @@
         "rank": "Alternate"
       }
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "fs": {

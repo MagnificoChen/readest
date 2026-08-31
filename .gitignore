@@ -1,6 +1,22 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 docker/.env
 
+# pnpm fallback store (build-windows.ps1) when the drive root is not writable
+.pnpm-store/
+
+# local cargo cache home (sandboxed builds), reuses E:\Workspace\rust\.cargo\registry
+.cargo-home/
+
+# local tauri tools cache (sandboxed builds): NSIS etc.
+.tauri-home/
+
+# local JDK 17 (Android builds): Temurin green build, auto-detected by build script
+.jdk/
+
+# local android release keystore (build-android.ps1) + sandboxed gradle cache
+.android-keystore/
+.gradle-home/
+
 # dependencies
 /node_modules
 /.pnp
