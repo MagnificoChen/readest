@@ -32,6 +32,7 @@ import { useBookOrbitNotesSync } from '../../hooks/useBookOrbitNotesSync';
 import { useNotesSync } from '../../hooks/useNotesSync';
 import { useReadwiseSync } from '../../hooks/useReadwiseSync';
 import { useHardcoverSync } from '../../hooks/useHardcoverSync';
+import { useNotionSync } from '../../hooks/useNotionSync';
 import { useTextSelector } from '../../hooks/useTextSelector';
 import { Point, Position, TextSelection } from '@/utils/sel';
 import {
@@ -79,6 +80,7 @@ import {
 } from '../../utils/globalAnnotations';
 import { annotationToolButtons } from './AnnotationTools';
 import AnnotationRangeEditor from './AnnotationRangeEditor';
+import PageTurnHint from './PageTurnHint';
 import SelectionRangeEditor from './SelectionRangeEditor';
 import AnnotationPopup from './AnnotationPopup';
 import DictionaryPopup from './DictionaryPopup';
@@ -121,9 +123,14 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const getView = useReaderStore((s) => s.getView);
   const getViewsById = useReaderStore((s) => s.getViewsById);
   const getViewSettings = useReaderStore((s) => s.getViewSettings);
-  const { setNotebookVisible, setNotebookNewAnnotation, setNotebookNewHighlightIds } =
-    useNotebookStore();
-  const { clearBooknotesNav, isSideBarVisible } = useSidebarStore();
+  const { setNotebookVisible, setNotebookActiveTab } = useNotebookStore();
+  const {
+    clearBooknotesNav,
+    isSideBarVisible,
+    setAnnotationEditTarget,
+    setSearchBarVisible,
+    setSideBarVisible,
+  } = useSidebarStore();
   const { listenToNativeTouchEvents } = useDeviceControlStore();
   const { loadCustomDictionaries } = useCustomDictionaryStore();
   const { selectFiles } = useFileSelector(appService, _);
@@ -132,6 +139,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   useBookOrbitNotesSync(bookKey);
   useReadwiseSync(bookKey);
   useHardcoverSync(bookKey);
+  useNotionSync(bookKey);
 
   useEffect(() => {
     void loadCustomDictionaries(envConfig).catch((error) => {
@@ -348,6 +356,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     noteAutoTurnPoint,
     cancelAutoTurn,
     onAutoTurn,
+    turnHint,
   } = useTextSelector(
     bookKey,
     contentInsets,
@@ -1221,29 +1230,24 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     const cfi = selection.popup ? selection.cfi : view?.getCFI(selection.index, selection.range);
     if (!cfi) return;
 
-    eventDispatcher.dispatch('toast', {
-      type: 'info',
-      message: _('Copied to notebook'),
-      className: 'whitespace-nowrap',
-      timeout: 2000,
-    });
-
     const { booknotes: annotations = [] } = config;
+    const existingIndex = annotations.findIndex(
+      (annotation) =>
+        annotation.cfi === cfi && annotation.type === 'excerpt' && !annotation.deletedAt,
+    );
+    const existing = existingIndex === -1 ? null : annotations[existingIndex]!;
+    const now = Date.now();
     const annotation: BookNote = {
-      id: uniqueId(),
+      id: existing?.id ?? uniqueId(),
       type: 'excerpt',
       cfi,
       note: '',
       text: selection.text,
       page: selection.page,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
     };
 
-    const existingIndex = annotations.findIndex(
-      (annotation) =>
-        annotation.cfi === cfi && annotation.type === 'excerpt' && !annotation.deletedAt,
-    );
     if (existingIndex !== -1) {
       annotations[existingIndex] = annotation;
     } else {
@@ -1253,7 +1257,14 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     if (updatedConfig) {
       saveConfig(envConfig, bookKey, updatedConfig, settings);
     }
+    eventDispatcher.dispatch('toast', {
+      type: 'info',
+      message: _('Copied to Notebook'),
+      className: 'whitespace-nowrap',
+      timeout: 2000,
+    });
     if (!appService?.isMobile) {
+      setNotebookActiveTab('notes');
       setNotebookVisible(true);
     }
   };
@@ -1465,13 +1476,24 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       selection.href = href;
     }
     const created = handleHighlight(true);
-    setNotebookVisible(true);
-    setNotebookNewAnnotation(selection);
-    // Remember the eagerly-created highlights (one per page of a cross-page
-    // selection) so the notebook can remove them if the note is never saved. A
-    // restyle of an existing highlight creates none — that record predates this
-    // flow and must survive a cancel (#4791).
-    setNotebookNewHighlightIds(created.map((annotation) => annotation.id));
+    const cfi = selection.popup ? selection.cfi : view?.getCFI(selection.index, selection.range);
+    const target =
+      created[0] ??
+      getConfig(bookKey)?.booknotes?.find(
+        (annotation) =>
+          annotation.type === 'annotation' && annotation.cfi === cfi && !annotation.deletedAt,
+      );
+    if (!target) return;
+    setAnnotationEditTarget(bookKey, {
+      annotationId: target.id,
+      placeholderIds: created.map((annotation) => annotation.id),
+    });
+    setSearchBarVisible(false);
+    clearBooknotesNav(bookKey);
+    setConfig(bookKey, {
+      viewSettings: { ...viewSettings, sideBarTab: 'annotations' },
+    });
+    setSideBarVisible(true);
     handleDismissPopup();
   };
 
@@ -1571,34 +1593,52 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   useShortcuts(
     {
       onHighlightSelection: () => {
+        if (!selection?.text || (selection.popup && !selection.cfi)) return false;
         handleHighlight(false, 'highlight');
+        return true;
       },
       onUnderlineSelection: () => {
+        if (!selection?.text || (selection.popup && !selection.cfi)) return false;
         handleHighlight(false, 'underline');
+        return true;
       },
       onAnnotateSelection: () => {
+        if (!selection?.text || (selection.popup && !selection.cfi)) return false;
         handleAnnotate();
+        return true;
       },
       onSearchSelection: () => {
+        if (!selection?.text) return false;
         handleSearch();
+        return true;
       },
       onCopySelection: () => {
+        if (!selection?.text) return false;
         handleCopy(false);
+        return true;
       },
       onTranslateSelection: () => {
+        if (!selection?.text) return false;
         handleTranslation();
+        return true;
       },
       onDictionarySelection: () => {
+        if (!selection?.text) return false;
         handleDictionary();
+        return true;
       },
       onReadAloudSelection: () => {
+        if (!selection?.text || selection.popup) return false;
         handleSpeakText();
+        return true;
       },
       onProofreadSelection: () => {
+        if (selection?.popup && !selection.cfi) return false;
         handleProofread();
+        return true;
       },
     },
-    [selection?.text],
+    [selection?.text, selection?.cfi, selection?.popup],
   );
 
   const handleImportAnnotations = (event: CustomEvent) => {
@@ -1858,7 +1898,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
 
     const config = getConfig(bookKey)!;
     const { booknotes: allNotes = [] } = config;
-    const booknotes = allNotes.filter((note) => !note.deletedAt);
+    const booknotes = allNotes.filter((note) => note.type !== 'notebook' && !note.deletedAt);
     if (booknotes.length === 0) {
       eventDispatcher.dispatch('toast', {
         type: 'info',
@@ -2095,6 +2135,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
 
   return (
     <div ref={containerRef} role='toolbar' tabIndex={-1}>
+      <PageTurnHint bookKey={bookKey} contentInsets={contentInsets} hint={turnHint} />
       {showDictionaryPopup &&
         (() => {
           // Below `sm` (or short landscape) we present the dictionary as a

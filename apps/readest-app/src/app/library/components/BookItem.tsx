@@ -112,8 +112,8 @@ const BookItem: React.FC<BookItemProps> = ({
     >
       <div
         className={clsx(
-          'bookitem-main relative flex justify-center overflow-hidden rounded',
-          !fitCoverInGrid && 'aspect-[28/41]',
+          'bookitem-main relative flex justify-center overflow-hidden rounded-sm',
+          !fitCoverInGrid && 'aspect-28/41',
           coverFit === 'crop' && 'shadow-md',
           mode === 'grid' && 'items-end',
           mode === 'list' && 'min-w-20 items-center',
@@ -127,7 +127,7 @@ const BookItem: React.FC<BookItemProps> = ({
           showSpine={settings.librarySkeuomorphicCovers}
           imageClassName={clsx(
             'shadow-md',
-            settings.librarySkeuomorphicCovers ? 'rounded-none' : 'rounded',
+            settings.librarySkeuomorphicCovers ? 'rounded-none' : 'rounded-sm',
           )}
           onAspectRatioChange={setCoverAspect}
         />
@@ -146,7 +146,7 @@ const BookItem: React.FC<BookItemProps> = ({
             {isIndeterminate ? (
               <span className='loading loading-spinner loading-sm text-white eink:text-base-content' />
             ) : (
-              <span className='eink:text-base-content text-sm font-semibold text-white not-eink:drop-shadow-sm'>
+              <span className='eink:text-base-content text-sm font-semibold text-white not-eink:drop-shadow-xs'>
                 {Math.round(transferProgress)}%
               </span>
             )}
@@ -160,7 +160,7 @@ const BookItem: React.FC<BookItemProps> = ({
             {bookSelected ? (
               <MdCheckCircle className='fill-blue-500' />
             ) : (
-              <MdCheckCircleOutline className='fill-gray-300 drop-shadow-sm' />
+              <MdCheckCircleOutline className='fill-gray-300 drop-shadow-xs' />
             )}
           </div>
         )}
@@ -176,7 +176,7 @@ const BookItem: React.FC<BookItemProps> = ({
           <h4
             className={clsx(
               'overflow-hidden text-ellipsis font-semibold',
-              mode === 'grid' && 'block whitespace-nowrap text-[0.6em] text-xs',
+              mode === 'grid' && 'block whitespace-nowrap text-xs',
               mode === 'list' && 'line-clamp-1 text-base',
             )}
           >
@@ -230,14 +230,14 @@ const BookItem: React.FC<BookItemProps> = ({
                   showBookDetailsModal(book);
                 }}
               >
-                <div className='pt-[2px] sm:pt-[1px]'>
+                <div className='pt-0.5 sm:pt-px'>
                   <LiaInfoCircleSolid size={iconSize15} />
                 </div>
               </button>
             )}
             {(book.hasNarration || isAbsBook) && (
               <div
-                className='pt-[2px] sm:pt-[1px]'
+                className='pt-0.5 sm:pt-px'
                 title={isAbsBook ? _('Audiobook') : _('Includes narration')}
                 aria-label={isAbsBook ? _('Audiobook') : _('Includes narration')}
               >

@@ -28,13 +28,8 @@ import { useThemeStore } from '@/store/themeStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useSettingsStore } from '@/store/settingsStore';
-import { useFileSyncStore } from '@/store/fileSyncStore';
-import {
-  getActiveFileSyncBackends,
-  isReadestCloudEnabled,
-  settingsKeyForBackend,
-} from '@/services/sync/cloudSyncProvider';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useCloudSyncStatus } from '@/hooks/useCloudSyncStatus';
 import { getStyles } from '@/utils/style';
 import { navigateToLogin } from '@/utils/nav';
 import { getScrollGapAttr } from '@/utils/webtoon';
@@ -42,8 +37,6 @@ import { applyPageTurnAttributes } from '@/app/reader/hooks/useCapturedTurn';
 import { eventDispatcher } from '@/utils/event';
 import { getMaxInlineSize } from '@/utils/config';
 import { nextThemeMode } from '@/utils/ambientLight';
-import dayjs from 'dayjs';
-import { clampSyncTimeForDisplay } from '@/utils/time';
 import { saveViewSettings } from '@/helpers/settings';
 import { tauriHandleToggleFullScreen } from '@/utils/window';
 import MenuItem from '@/components/MenuItem';
@@ -65,7 +58,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   const { user } = useAuth();
   const { envConfig, appService } = useEnv();
   const { getConfig, getBookData } = useBookDataStore();
-  const { settings, setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
+  const { setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
   const { getView, getViewSettings, getViewState, getProgress, setViewSettings, recreateViewer } =
     useReaderStore();
   const config = getConfig(bookKey)!;
@@ -124,33 +117,38 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     setIsDropdownOpen?.(false);
   };
 
-  const activeFileBackends = getActiveFileSyncBackends(settings);
-  const readestCloudEnabled = isReadestCloudEnabled(settings);
-  // The library-wide "Sync now" (Settings → Integrations) surfaces its running
-  // state through fileSyncStore; the per-book hook keeps no such state, so the
-  // icon spins only while a library pass is in flight.
-  const fileSyncing = useFileSyncStore((s) =>
-    activeFileBackends.some((k) => s.byKind[k]?.isSyncing),
+  // Readest Cloud's own stamps for THIS book. The per-book values are more
+  // precise than the library-wide cursors the Settings menu uses, so the reader
+  // feeds them in rather than letting the hook guess.
+  const nativeLastSyncTime = Math.max(
+    config?.lastSyncedAtConfig || 0,
+    config?.lastSyncedAtNotes || 0,
+    config?.lastPushedAtConfig || 0,
+    config?.lastPushedAtNotes || 0,
   );
+  // Every provider the user actually selected, not just Readest Cloud (#5910).
+  const syncStatus = useCloudSyncStatus(nativeLastSyncTime);
 
   const handleSync = () => {
+    // Close the dropdown first like every other menu item — the dispatches
+    // below are fire-and-forget, so leaving it open reads as a hang.
     setIsDropdownOpen?.(false);
-    if (!user) {
+    // Only Readest Cloud needs an account. With a third-party backend
+    // configured the row must sync, not bounce the user to a login they do not
+    // need (#5910).
+    if (syncStatus.needsSignIn) {
       navigateToLogin(router);
       return;
     }
-    // The menu item serves whichever provider owns library sync on this device:
-    // the native progress chain when Readest Cloud is on, the per-book
-    // file-sync hooks (useFileSync listens for these) when a third-party
-    // backend is. Both may run in parallel — providers are mirrors, not
-    // alternatives. With neither enabled the item stays inert.
-    if (readestCloudEnabled) {
-      eventDispatcher.dispatch('sync-book-progress', { bookKey });
-    }
-    if (activeFileBackends.length > 0) {
-      eventDispatcher.dispatch('push-file-sync', { bookKey });
-      eventDispatcher.dispatch('pull-file-sync', { bookKey });
-    }
+    // One tap, every provider the user selected. Before #5910 this dispatched
+    // `sync-book-progress` alone, which only useProgressSync (Readest Cloud)
+    // and useHardcoverSync listen for — so for a third-party-only user the row
+    // did nothing at all.
+    eventDispatcher.dispatch('sync-book-progress', { bookKey });
+    eventDispatcher.dispatch('flush-notion-sync', { bookKey });
+    eventDispatcher.dispatch('push-file-sync', { bookKey });
+    eventDispatcher.dispatch('pull-file-sync', { bookKey });
+    eventDispatcher.dispatch('flush-kosync', { bookKey });
   };
 
   const handleStartRSVP = () => {
@@ -293,16 +291,6 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtlSpread]);
-
-  // Last successful sync across every provider that may run on this device:
-  // the native config timestamps plus each enabled file backend's lastSyncedAt.
-  const lastSyncTime = Math.max(
-    config?.lastSyncedAtConfig || 0,
-    config?.lastSyncedAtNotes || 0,
-    config?.lastPushedAtConfig || 0,
-    config?.lastPushedAtNotes || 0,
-    ...activeFileBackends.map((k) => settings[settingsKeyForBackend(k)]?.lastSyncedAt ?? 0),
-  );
 
   return (
     <Menu
@@ -520,17 +508,24 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
       <hr aria-hidden='true' className='border-base-300 my-1' />
 
       <MenuItem
-        label={
-          !user
-            ? _('Sign in to Sync')
-            : lastSyncTime
-              ? _('Synced {{time}}', {
-                  time: dayjs(clampSyncTimeForDisplay(lastSyncTime)).fromNow(),
-                })
-              : _('Never synced')
+        label={syncStatus.label}
+        description={
+          // Which provider the status belongs to. Only worth saying when a
+          // third-party backend is in play — with Readest Cloud alone the row
+          // means what it always meant.
+          syncStatus.providers.length > 1
+            ? // Several names in full would overrun the row; show a count.
+              // `count` (not a plain var) so i18next applies each locale's
+              // plural rule.
+              _('Synced via {{count}} providers', { count: syncStatus.providers.length })
+            : syncStatus.providers[0] && syncStatus.providers[0].kind !== 'readest'
+              ? _('Synced via {{provider}}', { provider: syncStatus.providers[0].name })
+              : undefined
         }
-        Icon={user ? MdSync : MdSyncProblem}
-        iconClassName={user && (viewState?.syncing || fileSyncing) ? 'animate-reverse-spin' : ''}
+        Icon={syncStatus.needsSignIn || syncStatus.failed ? MdSyncProblem : MdSync}
+        iconClassName={
+          syncStatus.syncing || (user && viewState?.syncing) ? 'animate-reverse-spin' : ''
+        }
         onClick={handleSync}
         siblings={
           <button

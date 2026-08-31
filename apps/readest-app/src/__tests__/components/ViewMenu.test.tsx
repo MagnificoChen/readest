@@ -38,16 +38,6 @@ const currentViewSettings = {
 
 const mockRecreateViewer = vi.fn();
 const mockSaveViewSettings = vi.fn().mockResolvedValue(undefined);
-const mockDispatch = vi.fn();
-const mockSetIsDropdownOpen = vi.fn();
-const mockSettings: Record<string, { enabled?: boolean; lastSyncedAt?: number }> = {
-  webdav: { enabled: false },
-  googleDrive: { enabled: false },
-  s3: { enabled: false },
-  onedrive: { enabled: false, lastSyncedAt: 0 },
-  icloud: { enabled: false },
-};
-let mockUser: unknown = null;
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -56,7 +46,7 @@ vi.mock('@/context/EnvContext', () => ({
   useEnv: () => ({ envConfig: {}, appService: { hasAmbientLightSensor: false } }),
 }));
 vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ user: mockUser }),
+  useAuth: () => ({ user: null }),
 }));
 vi.mock('@/store/themeStore', () => ({
   useThemeStore: () => ({ themeMode: 'auto', isDarkMode: false, setThemeMode: vi.fn() }),
@@ -79,22 +69,9 @@ vi.mock('@/store/bookDataStore', () => ({
 }));
 vi.mock('@/store/settingsStore', () => ({
   useSettingsStore: () => ({
-    settings: mockSettings,
     setSettingsDialogOpen: vi.fn(),
     setSettingsDialogBookKey: vi.fn(),
   }),
-}));
-vi.mock('@/store/fileSyncStore', () => ({
-  useFileSyncStore: (selector: (s: { byKind: Record<string, unknown> }) => boolean) =>
-    selector({ byKind: {} }),
-}));
-vi.mock('@/services/sync/cloudSyncProvider', () => ({
-  getActiveFileSyncBackends: (settings: Record<string, { enabled?: boolean }>) =>
-    (['webdav', 'gdrive', 's3', 'onedrive', 'icloud'] as const).filter((k) => settings[k]?.enabled),
-  isReadestCloudEnabled: (settings: Record<string, { enabled?: boolean }>) =>
-    settings['readestCloud']?.enabled ??
-    !['webdav', 'gdrive', 's3', 'onedrive', 'icloud'].some((k) => settings[k]?.enabled),
-  settingsKeyForBackend: (kind: string) => kind,
 }));
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (key: string) => key,
@@ -120,15 +97,10 @@ vi.mock('@/app/reader/hooks/useCapturedTurn', () => ({ applyPageTurnAttributes: 
 vi.mock('@/utils/config', () => ({ getMaxInlineSize: () => 720 }));
 vi.mock('@/utils/ambientLight', () => ({ nextThemeMode: (mode: string) => mode }));
 vi.mock('@/utils/window', () => ({ tauriHandleToggleFullScreen: vi.fn() }));
-vi.mock('@/utils/event', () => ({
-  eventDispatcher: { dispatch: (...args: unknown[]) => mockDispatch(...args) },
-}));
 
 describe('ViewMenu right-to-left pages toggle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUser = null;
-    for (const slice of Object.values(mockSettings)) slice.enabled = false;
     mockSaveViewSettings.mockResolvedValue(undefined);
     mockView.book.dir = undefined;
     mockBookData.isFixedLayout = true;
@@ -192,66 +164,5 @@ describe('ViewMenu right-to-left pages toggle', () => {
       expect(mockView.book.dir).toBe('ltr');
       expect(mockRecreateViewer).toHaveBeenCalledWith(expect.anything(), 'book-1');
     });
-  });
-});
-
-describe('ViewMenu sync menu item', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockUser = { plan: 'free' };
-    for (const slice of Object.values(mockSettings)) slice.enabled = false;
-    delete mockSettings['readestCloud'];
-  });
-
-  afterEach(() => {
-    cleanup();
-  });
-
-  it('routes the manual sync to the per-book file-sync events when only OneDrive is on', () => {
-    mockSettings['onedrive']!.enabled = true;
-
-    render(<ViewMenu bookKey='book-1' setIsDropdownOpen={mockSetIsDropdownOpen} />);
-
-    fireEvent.click(screen.getByText('Never synced'));
-
-    expect(mockDispatch).toHaveBeenCalledWith('push-file-sync', { bookKey: 'book-1' });
-    expect(mockDispatch).toHaveBeenCalledWith('pull-file-sync', { bookKey: 'book-1' });
-    expect(mockDispatch).not.toHaveBeenCalledWith('sync-book-progress', expect.anything());
-    expect(mockSetIsDropdownOpen).toHaveBeenCalledWith(false);
-  });
-
-  it('keeps the native progress chain when no third-party backend is on', () => {
-    render(<ViewMenu bookKey='book-1' setIsDropdownOpen={mockSetIsDropdownOpen} />);
-
-    fireEvent.click(screen.getByText('Never synced'));
-
-    expect(mockDispatch).toHaveBeenCalledWith('sync-book-progress', { bookKey: 'book-1' });
-    expect(mockDispatch).not.toHaveBeenCalledWith('push-file-sync', expect.anything());
-    expect(mockDispatch).not.toHaveBeenCalledWith('pull-file-sync', expect.anything());
-    expect(mockSetIsDropdownOpen).toHaveBeenCalledWith(false);
-  });
-
-  it('runs both channels when Readest Cloud and a file backend are on together', () => {
-    mockSettings['onedrive']!.enabled = true;
-    mockSettings['readestCloud'] = { enabled: true };
-
-    render(<ViewMenu bookKey='book-1' />);
-
-    fireEvent.click(screen.getByText('Never synced'));
-
-    expect(mockDispatch).toHaveBeenCalledWith('sync-book-progress', { bookKey: 'book-1' });
-    expect(mockDispatch).toHaveBeenCalledWith('push-file-sync', { bookKey: 'book-1' });
-    expect(mockDispatch).toHaveBeenCalledWith('pull-file-sync', { bookKey: 'book-1' });
-  });
-
-  it('closes the menu before navigating an unauthenticated user to login', () => {
-    mockUser = null;
-
-    render(<ViewMenu bookKey='book-1' setIsDropdownOpen={mockSetIsDropdownOpen} />);
-
-    fireEvent.click(screen.getByText('Sign in to Sync'));
-
-    expect(mockSetIsDropdownOpen).toHaveBeenCalledWith(false);
-    expect(mockDispatch).not.toHaveBeenCalled();
   });
 });

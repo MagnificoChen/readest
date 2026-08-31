@@ -149,7 +149,15 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
         minHeight={popupHeight}
         maxHeight={720}
         position={position}
-        className='grid h-full select-text grid-rows-[1fr,auto,1fr,auto]'
+        // Tracks are space-separated (`_` in a Tailwind arbitrary value).
+        // Commas here emitted `grid-template-rows:1fr,auto,1fr,auto`, which the
+        // browser discards, leaving four implicit auto rows that sized to their
+        // content and pushed the translated pane and the provider footer past
+        // the popup's own max height with nothing scrollable to reach them.
+        // `minmax(0,...)` rather than a bare `1fr`: a bare fr floors at
+        // min-content, so the rows would refuse to shrink inside the capped
+        // popup and overflow it again.
+        className='grid h-full select-text grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)_auto]'
         onDismiss={onDismiss}
       >
         <div className='overflow-y-auto p-4 font-sans'>
@@ -176,7 +184,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
           <p className='text-base'>{text}</p>
         </div>
 
-        <div className='mx-4 flex-shrink-0 border-t border-base-content/20'></div>
+        <div className='mx-4 shrink-0 border-t border-base-content/20'></div>
 
         <div className='overflow-y-auto p-4 font-sans'>
           <div className='mb-2 flex items-center justify-between'>

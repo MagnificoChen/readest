@@ -24,7 +24,7 @@ import {
   pickFresherCover,
   pickFresherMetadata,
 } from '@/app/library/utils/libraryUtils';
-import { getPrimaryLanguage } from '@/utils/book';
+import { getPrimaryLanguage, pickFresherGroup } from '@/utils/book';
 import { isAudiobook, parseAbsFilePath } from '@/utils/audiobook';
 
 export const useBooksSync = () => {
@@ -115,7 +115,11 @@ export const useBooksSync = () => {
         let fileSucceeded = false;
         if (runFilePass) {
           const result = await runFileLibrarySyncPass(envConfig, _);
-          fileSucceeded = result !== null;
+          // A run that could not write library.json converged NOTHING, however
+          // many books it uploaded: peers read membership, tombstones and the
+          // uploaded-file record from that one file. Reporting it as "N books
+          // synced" is what let #5900 go unnoticed for so long.
+          fileSucceeded = result !== null && !result.indexPushFailed;
           fileSynced = result?.booksSynced ?? 0;
         }
 
@@ -277,6 +281,25 @@ export const useBooksSync = () => {
             mergedBook.primaryLanguage = getPrimaryLanguage(meta.metadata.language);
           }
         }
+        // Group membership resolves on its own groupUpdatedAt clock (issue
+        // #5911). `transformBookFromDB` always materialises groupId/groupName,
+        // so the row spread above hands an absent cloud group straight over a
+        // present local one — and it does so on `>=`, meaning a mere TIE wiped
+        // the group. `updatedAt` is bumped by an UPLOAD as well as by an edit,
+        // so a stale cloud row could outrank every real grouping.
+        const group = pickFresherGroup(
+          oldBook,
+          matchingBook,
+          matchingBook.updatedAt >= oldBook.updatedAt,
+        );
+        mergedBook.groupId = group.groupId;
+        mergedBook.groupName = group.groupName;
+        mergedBook.groupUpdatedAt = group.groupUpdatedAt;
+        // Same story for the metadata blob, which carries the description: a
+        // cloud row whose `metadata` column is null arrives as `metadata: null`
+        // and the spread clears the local copy. An absent blob always means
+        // "this row never had one", never "the user cleared it" (#5912).
+        mergedBook.metadata = mergedBook.metadata ?? oldBook.metadata ?? matchingBook.metadata;
         return mergedBook;
       }
       return oldBook;

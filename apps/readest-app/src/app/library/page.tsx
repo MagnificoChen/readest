@@ -306,8 +306,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       | typeof LibraryGroupByType.Series
       | typeof LibraryGroupByType.Author
       | typeof LibraryGroupByType.Tag
-      | typeof LibraryGroupByType.Subject;
+      | typeof LibraryGroupByType.Subject
+      | typeof LibraryGroupByType.Status;
     groupName: string;
+    localized?: boolean;
   } | null>(null);
   // Direct (non-queued) download progress, keyed by book hash. Entries are
   // added and removed by useBookTransferActions, its only writer.
@@ -412,20 +414,17 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     },
   );
   useShortcuts({
-    onToggleFullscreen: async () => {
-      if (isTauriAppPlatform()) {
-        await tauriHandleToggleFullScreen();
-      }
+    onToggleFullscreen: () => {
+      if (!isTauriAppPlatform()) return false;
+      return tauriHandleToggleFullScreen().then(() => true);
     },
-    onCloseWindow: async () => {
-      if (isTauriAppPlatform()) {
-        await tauriHandleClose();
-      }
+    onCloseWindow: () => {
+      if (!isTauriAppPlatform()) return false;
+      return tauriHandleClose().then(() => true);
     },
-    onQuitApp: async () => {
-      if (isTauriAppPlatform()) {
-        await tauriQuitApp();
-      }
+    onQuitApp: () => {
+      if (!isTauriAppPlatform()) return false;
+      return tauriQuitApp().then(() => true);
     },
     onOpenFontLayoutSettings: () => {
       setSettingsDialogOpen(true);
@@ -877,7 +876,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       (groupBy === LibraryGroupByType.Series ||
         groupBy === LibraryGroupByType.Author ||
         groupBy === LibraryGroupByType.Tag ||
-        groupBy === LibraryGroupByType.Subject)
+        groupBy === LibraryGroupByType.Subject ||
+        groupBy === LibraryGroupByType.Status)
     ) {
       // Find the group to get its name
       const allGroups = createBookGroups(
@@ -890,6 +890,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         setCurrentVirtualGroup({
           groupBy,
           groupName: targetGroup.displayName || targetGroup.name,
+          localized: targetGroup.localized,
         });
       } else {
         setCurrentVirtualGroup(null);
@@ -1990,7 +1991,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
                   key={term}
                   type='button'
                   onClick={() => handleSearchQueryApply(term)}
-                  className='bg-base-300/45 hover:bg-base-300/70 text-base-content/70 max-w-[60%] flex-shrink-0 whitespace-nowrap rounded-full px-3 py-0.5 text-xs'
+                  className='bg-base-300/45 hover:bg-base-300/70 text-base-content/70 max-w-[60%] shrink-0 whitespace-nowrap rounded-full px-3 py-0.5 text-xs'
                 >
                   <p className='truncate'>{term}</p>
                 </button>
@@ -2019,7 +2020,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           <div className='flex flex-wrap items-center gap-y-1 px-4 text-base'>
             <button
               onClick={() => handleNavigateToPath(undefined)}
-              className='hover:bg-base-300 text-base-content/85 rounded px-2 py-1'
+              className='hover:bg-base-300 text-base-content/85 rounded-sm px-2 py-1'
             >
               {_('All')}
             </button>
@@ -2029,11 +2030,11 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
                 <React.Fragment key={index}>
                   <MdChevronRight size={iconSize} className='text-neutral-content' />
                   {isLast ? (
-                    <span className='truncate rounded px-2 py-1'>{crumb.name}</span>
+                    <span className='truncate rounded-sm px-2 py-1'>{crumb.name}</span>
                   ) : (
                     <button
                       onClick={() => handleNavigateToPath(crumb.path)}
-                      className='hover:bg-base-300 text-base-content/85 truncate rounded px-2 py-1'
+                      className='hover:bg-base-300 text-base-content/85 truncate rounded-sm px-2 py-1'
                     >
                       {crumb.name}
                     </button>
@@ -2048,15 +2049,16 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         <GroupHeader
           groupBy={currentVirtualGroup.groupBy}
           groupName={currentVirtualGroup.groupName}
+          localized={currentVirtualGroup.localized}
         />
       )}
       {showBookshelf &&
         (libraryBooks.some((book) => !book.deletedAt) ? (
-          <div aria-label={_('Your Bookshelf')} className='flex min-h-0 flex-grow flex-col'>
+          <div aria-label={_('Your Bookshelf')} className='flex min-h-0 grow flex-col'>
             <div
               ref={containerRef}
               className={clsx(
-                'scroll-container drop-zone flex min-h-0 flex-grow flex-col',
+                'scroll-container drop-zone flex min-h-0 grow flex-col',
                 isDragging && 'drag-over',
               )}
               style={{
