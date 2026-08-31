@@ -28,6 +28,12 @@ import { useThemeStore } from '@/store/themeStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useFileSyncStore } from '@/store/fileSyncStore';
+import {
+  getActiveFileSyncBackends,
+  isReadestCloudEnabled,
+  settingsKeyForBackend,
+} from '@/services/sync/cloudSyncProvider';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getStyles } from '@/utils/style';
 import { navigateToLogin } from '@/utils/nav';
@@ -59,7 +65,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   const { user } = useAuth();
   const { envConfig, appService } = useEnv();
   const { getConfig, getBookData } = useBookDataStore();
-  const { setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
+  const { settings, setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
   const { getView, getViewSettings, getViewState, getProgress, setViewSettings, recreateViewer } =
     useReaderStore();
   const config = getConfig(bookKey)!;
@@ -118,12 +124,32 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     setIsDropdownOpen?.(false);
   };
 
+  const activeFileBackends = getActiveFileSyncBackends(settings);
+  const readestCloudEnabled = isReadestCloudEnabled(settings);
+  // The library-wide "Sync now" (Settings → Integrations) surfaces its running
+  // state through fileSyncStore; the per-book hook keeps no such state, so the
+  // icon spins only while a library pass is in flight.
+  const fileSyncing = useFileSyncStore((s) =>
+    activeFileBackends.some((k) => s.byKind[k]?.isSyncing),
+  );
+
   const handleSync = () => {
+    setIsDropdownOpen?.(false);
     if (!user) {
       navigateToLogin(router);
-      setIsDropdownOpen?.(false);
-    } else {
+      return;
+    }
+    // The menu item serves whichever provider owns library sync on this device:
+    // the native progress chain when Readest Cloud is on, the per-book
+    // file-sync hooks (useFileSync listens for these) when a third-party
+    // backend is. Both may run in parallel — providers are mirrors, not
+    // alternatives. With neither enabled the item stays inert.
+    if (readestCloudEnabled) {
       eventDispatcher.dispatch('sync-book-progress', { bookKey });
+    }
+    if (activeFileBackends.length > 0) {
+      eventDispatcher.dispatch('push-file-sync', { bookKey });
+      eventDispatcher.dispatch('pull-file-sync', { bookKey });
     }
   };
 
@@ -268,11 +294,14 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtlSpread]);
 
+  // Last successful sync across every provider that may run on this device:
+  // the native config timestamps plus each enabled file backend's lastSyncedAt.
   const lastSyncTime = Math.max(
     config?.lastSyncedAtConfig || 0,
     config?.lastSyncedAtNotes || 0,
     config?.lastPushedAtConfig || 0,
     config?.lastPushedAtNotes || 0,
+    ...activeFileBackends.map((k) => settings[settingsKeyForBackend(k)]?.lastSyncedAt ?? 0),
   );
 
   return (
@@ -501,7 +530,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
               : _('Never synced')
         }
         Icon={user ? MdSync : MdSyncProblem}
-        iconClassName={user && viewState?.syncing ? 'animate-reverse-spin' : ''}
+        iconClassName={user && (viewState?.syncing || fileSyncing) ? 'animate-reverse-spin' : ''}
         onClick={handleSync}
         siblings={
           <button
