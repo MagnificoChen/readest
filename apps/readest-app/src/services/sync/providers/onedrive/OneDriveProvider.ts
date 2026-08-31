@@ -18,14 +18,7 @@ import {
 } from '@/services/sync/file/provider';
 import { tauriDownload, tauriUpload } from '@/utils/transfer';
 import type { ProgressHandler } from '@/utils/transfer';
-import {
-  childrenUrl,
-  contentUrl,
-  createChildUrl,
-  deleteItemUrl,
-  itemUrl,
-  uploadSessionUrl,
-} from './graphRest';
+import { childrenUrl, contentUrl, deleteItemUrl, itemUrl, uploadSessionUrl } from './graphRest';
 
 export interface OneDriveAuth {
   getAccessToken(): Promise<string>;
@@ -39,6 +32,7 @@ export interface OneDriveProviderOptions {
 const HTTP_GET = 'GET';
 const HTTP_POST = 'POST';
 const HTTP_PUT = 'PUT';
+const HTTP_PATCH = 'PATCH';
 const HTTP_DELETE = 'DELETE';
 
 const HTTP_UNAUTHORIZED = 401;
@@ -61,8 +55,6 @@ const MS_PER_SEC = 1000;
 
 /** Graph error codes that are transient even under a 403 (throttling). */
 const THROTTLE_CODES = new Set(['activityLimitReached', 'quotaLimitReached']);
-/** Graph error code that makes a folder-create idempotent (already exists). */
-const NAME_EXISTS_CODE = 'nameAlreadyExists';
 
 type OneDriveOperation = 'read' | 'head' | 'list' | 'write' | 'create folder' | 'delete';
 
@@ -130,15 +122,8 @@ const wrap = async <T>(fn: () => Promise<T>): Promise<T> => {
   }
 };
 
-const splitSegments = (path: string): string[] => path.split('/').filter((s) => s.length > 0);
 const joinAbs = (parent: string, name: string): string =>
   parent === '/' || parent === '' ? `/${name}` : `${parent}/${name}`;
-const parentOf = (path: string): string => {
-  const segs = splitSegments(path);
-  segs.pop();
-  return segs.length ? `/${segs.join('/')}` : '/';
-};
-const nameOf = (path: string): string => splitSegments(path).pop() ?? '';
 
 const toFileEntry = (parentPath: string, item: GraphItem): FileEntry => {
   const isDirectory = item.folder !== undefined;
@@ -309,21 +294,19 @@ class OneDriveProviderImpl {
     return res;
   }
 
-  /** Create one folder (idempotent: 409 nameAlreadyExists is success). */
+  /**
+   * Create one folder by path: PATCH `approot:/{path}` with an empty folder
+   * facet. POSTing to the approot children collection is rejected with
+   * 400 invalidRequest on personal OneDrive accounts (verified empirically),
+   * while this form creates the folder when absent and returns the existing
+   * item when present — idempotent by construction, so a separate 409-handling
+   * path is unnecessary.
+   */
   private async createFolder(path: string): Promise<void> {
-    const res = await this.authedFetch(createChildUrl(parentOf(path)), HTTP_POST, {
+    const res = await this.authedFetch(itemUrl(path), HTTP_PATCH, {
       headers: { [CONTENT_TYPE_HEADER]: JSON_CONTENT_TYPE },
-      body: JSON.stringify({
-        name: nameOf(path),
-        folder: {},
-        '@microsoft.graph.conflictBehavior': 'fail',
-      }),
+      body: JSON.stringify({ folder: {} }),
     });
-    if (res.status === HTTP_CONFLICT) {
-      const code = await readGraphErrorCode(res);
-      if (code === NAME_EXISTS_CODE) return;
-      throw new GraphHttpError(res.status, code, `OneDrive create folder failed for ${path}`);
-    }
     await this.ensureOk(res, 'create folder', path);
   }
 

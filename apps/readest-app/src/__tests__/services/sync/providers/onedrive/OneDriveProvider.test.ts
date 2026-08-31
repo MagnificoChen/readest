@@ -71,15 +71,22 @@ describe('OneDriveProvider', () => {
     expect(url).toContain('/approot:/Readest/x.json:/content');
   });
 
-  test('ensureDir creates each folder and treats 409 nameAlreadyExists as success', async () => {
-    const calls: string[] = [];
+  test('ensureDir creates each folder by PATCHing the path with a folder facet', async () => {
+    const calls: { method: string; url: string; body: string }[] = [];
     const fetchFn = (async (u: string, init?: RequestInit) => {
-      calls.push(`${init?.method} ${u}`);
-      return json({ error: { code: 'nameAlreadyExists' } }, 409);
+      calls.push({ method: init?.method ?? '', url: u, body: String(init?.body ?? '') });
+      return json({ id: '1', name: 'books', folder: {} });
     }) as unknown as FetchFn;
     await expect(make(fetchFn).ensureDir(['/Readest', '/Readest/books'])).resolves.toBeUndefined();
     expect(calls.length).toBe(2);
-    expect(calls[0]).toContain('POST');
+    expect(calls[0]!.method).toBe('PATCH');
+    expect(calls[0]!.url).toBe(
+      'https://graph.microsoft.com/v1.0/me/drive/special/approot:/Readest',
+    );
+    expect(calls[1]!.url).toBe(
+      'https://graph.microsoft.com/v1.0/me/drive/special/approot:/Readest/books',
+    );
+    expect(JSON.parse(calls[0]!.body)).toEqual({ folder: {} });
   });
 
   test('deleteDir tolerates a 404', async () => {
