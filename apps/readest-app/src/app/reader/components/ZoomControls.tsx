@@ -6,6 +6,8 @@ import {
   IoRemove,
   IoShareOutline,
   IoDownloadOutline,
+  IoPin,
+  IoPinOutline,
 } from 'react-icons/io5';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useThemeStore } from '@/store/themeStore';
@@ -15,6 +17,10 @@ interface ZoomControlsProps {
   gridInsets: Insets;
   // Save/Share is image-specific; omit `onSave` (e.g. the table viewer) to hide it.
   canShare?: boolean;
+  // Image lock is image-specific too, and unavailable in layouts that cannot
+  // reserve a strip on every page; omit `onTogglePin` to hide the affordance.
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   onClose: () => void;
   onSave?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onZoomIn: () => void;
@@ -25,6 +31,8 @@ interface ZoomControlsProps {
 const ZoomControls: React.FC<ZoomControlsProps> = ({
   gridInsets,
   canShare,
+  isPinned,
+  onTogglePin,
   onClose,
   onSave,
   onZoomIn,
@@ -63,6 +71,17 @@ const ZoomControls: React.FC<ZoomControlsProps> = ({
           ) : (
             <IoDownloadOutline className='h-6 w-6' />
           )}
+        </button>
+      )}
+
+      {onTogglePin && (
+        <button
+          onClick={onTogglePin}
+          className='eink-bordered flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-black/50 transition-colors hover:bg-black/70'
+          aria-label={isPinned ? _('Unpin Image') : _('Pin Image')}
+          title={isPinned ? _('Unpin Image') : _('Pin Image')}
+        >
+          {isPinned ? <IoPin className='h-6 w-6' /> : <IoPinOutline className='h-6 w-6' />}
         </button>
       )}
 

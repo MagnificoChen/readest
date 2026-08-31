@@ -49,6 +49,10 @@ export interface Renderer extends HTMLElement {
   primaryIndex: number;
   getContents: () => { doc: Document; index?: number; overlayer?: unknown }[];
   scrollToAnchor?: (anchor: number | Range, reason?: string, smooth?: boolean) => void;
+  // Image lock: where the host should paint the pinned figure, in viewport
+  // coordinates. Null when no strip is reserved — nothing is pinned, or the
+  // layout (scrolled, vertical writing) cannot reserve one on every page.
+  getPinnedBandRect?: () => { left: number; top: number; width: number; height: number } | null;
   addEventListener: (
     type: string,
     listener: EventListener,

@@ -97,12 +97,21 @@ import Spinner from '@/components/Spinner';
 import KOSyncConflictResolver from './KOSyncResolver';
 import ImageViewer from './ImageViewer';
 import TableViewer from './TableViewer';
+import PinnedImage, { PinnedImageRect } from './PinnedImage';
 import { getTTSMiniPlayerClearance } from '../utils/ttsMiniPlayerPosition';
 
 declare global {
   interface Window {
     eval(script: string): void;
   }
+}
+
+// A figure locked on screen: its source plus the aspect ratio the renderer
+// needs to size the strip it keeps clear on every page.
+interface PinnedImageState {
+  src: string;
+  alt: string;
+  aspect: number;
 }
 
 const FoliateViewer: React.FC<{
@@ -150,6 +159,33 @@ const FoliateViewer: React.FC<{
   const librarySearchHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scrollMargins, setScrollMargins] = useState({ top: 0, bottom: 0 });
   const docLoaded = useRef(false);
+
+  // Image lock. The pinned figure is painted by the host over the page (see
+  // PinnedImage); the renderer keeps a matching strip clear on every page via
+  // the `pinned-aspect` attribute and reports the box back through
+  // `getPinnedBandRect()`.
+  const [pinnedImage, setPinnedImage] = useState<PinnedImageState | null>(null);
+  const [pinnedRect, setPinnedRect] = useState<PinnedImageRect | null>(null);
+  // Only paginated horizontal layouts can clear the same strip on every page.
+  // Scrolled mode has a real scrollport (a sticky figure would be the right
+  // mechanism there) and vertical writing pages down the block axis, so both
+  // need their own implementation rather than this one silently misbehaving.
+  const canPinImages = !!viewSettings && !viewSettings.scrolled && !viewSettings.vertical;
+
+  const syncPinnedRect = useCallback(() => {
+    const rect = viewRef.current?.renderer?.getPinnedBandRect?.() ?? null;
+    const host = containerRef.current?.getBoundingClientRect();
+    if (!rect || !host) {
+      setPinnedRect(null);
+      return;
+    }
+    setPinnedRect({
+      left: rect.left - host.left,
+      top: rect.top - host.top,
+      width: rect.width,
+      height: rect.height,
+    });
+  }, []);
 
   const autoScroll = useAutoScroll(bookKey, viewRef);
   const { registerSpeedListeners, overlayVisible: speedOverlayVisible } =
@@ -539,6 +575,9 @@ const FoliateViewer: React.FC<{
 
   const stabilizedHandler = useCallback(() => {
     setLoading(false);
+    // The strip moves with every relayout (resize, margin change, section
+    // swap), so re-read it wherever the paginator settles.
+    syncPinnedRect();
     // Layout/relayout warichu after paginator has set column-width via columnize()
     const contents = viewRef.current?.renderer?.getContents?.() || [];
     const vs = getViewSettings(bookKey);
@@ -666,6 +705,58 @@ const FoliateViewer: React.FC<{
     setImageList([]);
     setCurrentImageIndex(0);
   }, []);
+
+  // Lock the image on screen, or release the one already locked. Pinning
+  // decodes the image in the host to get its aspect ratio — that is all the
+  // renderer needs to size the strip it clears on every page.
+  const handleTogglePin = useCallback(async () => {
+    // Only the pinned image's own button releases it; pinning from a different
+    // image replaces the lock rather than silently clearing it.
+    if (pinnedImage && pinnedImage.src === selectedImage) {
+      setPinnedImage(null);
+      return;
+    }
+    if (!selectedImage) return;
+    const image = new Image();
+    image.src = selectedImage;
+    try {
+      await image.decode();
+    } catch {
+      // A source the host cannot decode cannot be painted over the page either.
+      return;
+    }
+    if (!image.naturalWidth || !image.naturalHeight) return;
+    setPinnedImage({
+      // The viewer's source is already a self-contained data URL, so the pin
+      // survives the section unload that would revoke the book's blob URL.
+      src: selectedImage,
+      alt: selectedImageAlt,
+      aspect: image.naturalWidth / image.naturalHeight,
+    });
+    handleCloseImage();
+  }, [pinnedImage, selectedImage, selectedImageAlt, handleCloseImage]);
+
+  // Drive the per-page reservation. Setting the attribute re-runs the layout,
+  // so the strip is read back on the next frame (the `stabilized` handler
+  // covers every later relayout).
+  useEffect(() => {
+    const renderer = viewRef.current?.renderer;
+    if (!renderer) return;
+    if (pinnedImage && canPinImages) {
+      renderer.setAttribute('pinned-aspect', `${pinnedImage.aspect}`);
+    } else {
+      renderer.removeAttribute('pinned-aspect');
+    }
+    const frame = requestAnimationFrame(syncPinnedRect);
+    return () => cancelAnimationFrame(frame);
+  }, [pinnedImage, canPinImages, syncPinnedRect]);
+
+  // A window resize relays out the page without changing any attribute.
+  useEffect(() => {
+    if (!pinnedImage) return;
+    window.addEventListener('resize', syncPinnedRect);
+    return () => window.removeEventListener('resize', syncPinnedRect);
+  }, [pinnedImage, syncPinnedRect]);
 
   useOpenMediaEvent(bookKey, handleImagePress, handleTablePress);
 
@@ -1068,6 +1159,8 @@ const FoliateViewer: React.FC<{
           gridInsets={gridInsets}
           src={selectedImage}
           caption={selectedImageAlt}
+          isPinned={!!pinnedImage && pinnedImage.src === selectedImage}
+          onTogglePin={canPinImages ? handleTogglePin : undefined}
           onClose={handleCloseImage}
           onPrevious={currentImageIndex > 0 ? handlePreviousImage : undefined}
           onNext={currentImageIndex < imageList.length - 1 ? handleNextImage : undefined}
@@ -1096,6 +1189,14 @@ const FoliateViewer: React.FC<{
         {...mouseHandlers}
         {...touchHandlers}
       />
+      {pinnedImage && pinnedRect && (
+        <PinnedImage
+          src={pinnedImage.src}
+          alt={pinnedImage.alt}
+          rect={pinnedRect}
+          onUnpin={() => setPinnedImage(null)}
+        />
+      )}
       {autoscrollAnchor && <AutoscrollIndicator anchor={autoscrollAnchor} />}
       {autoScroll.active && (
         <AutoScrollControl

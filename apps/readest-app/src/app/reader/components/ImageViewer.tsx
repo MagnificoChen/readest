@@ -16,6 +16,10 @@ interface ImageViewerProps {
   // The image's description (its `alt` text), shown over the zoomed image when
   // the book provides one (#5232).
   caption?: string;
+  // Image lock. Absent `onTogglePin` hides the affordance — the reader hides it
+  // in layouts where no strip can be reserved on every page.
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   onClose: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
@@ -39,6 +43,8 @@ const MAX_COMMIT_RASTER_DIM = 4096;
 const ImageViewer: React.FC<ImageViewerProps> = ({
   src,
   caption,
+  isPinned,
+  onTogglePin,
   onClose,
   onPrevious,
   onNext,
@@ -591,6 +597,8 @@ const ImageViewer: React.FC<ImageViewerProps> = ({
       <ZoomControls
         gridInsets={gridInsets}
         canShare={canShare}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
         onClose={onClose}
         onSave={handleSaveImage}
         onZoomIn={handleZoomIn}
