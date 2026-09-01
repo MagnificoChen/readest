@@ -1,5 +1,5 @@
 import { isReplicaRowAlive } from '@/libs/replicaInterpret';
-import type { ReplicaRow } from '@/types/replica';
+import type { ManifestFile, ReplicaRow } from '@/types/replica';
 import type { ReplicaTransferFile } from '@/store/transferStore';
 import type { BaseDir } from '@/types/system';
 import type { ReplicaAdapter } from './replicaRegistry';
@@ -66,12 +66,14 @@ export interface PullAndApplyDeps<T extends ReplicaLocalRecord> {
     base: BaseDir,
   ): string | null;
   /**
-   * Returns true iff EVERY filename exists on disk under
-   * `<bundleDir>/<filename>` in the kind's base dir. Lets the
-   * orchestrator skip the download queue when the binaries from a
-   * previous session are still around.
+   * Returns true iff EVERY manifest file is on disk under
+   * `<bundleDir>/<filename>` in the kind's base dir AND still matches
+   * what the publishing device recorded. Lets the orchestrator skip the
+   * download queue when the binaries from a previous session are still
+   * around, while a file that landed damaged is re-fetched rather than
+   * trusted forever — existence alone cannot tell those two apart.
    */
-  filesExist(bundleDir: string, filenames: string[]): Promise<boolean>;
+  filesIntact(bundleDir: string, files: ManifestFile[]): Promise<boolean>;
   /**
    * Hydrates the local store from disk before the orchestrator queries
    * findByContentId. Without this, applyRemote's auto-persist round-
@@ -275,12 +277,11 @@ const applyRow = async <T extends ReplicaLocalRecord>(
   if (!deps.adapter.binary) return;
 
   // Skip the download queue if every manifest file is already on disk
-  // under the resolved bundle dir. Refresh-the-page is a no-op rather
-  // than a re-download; partial-download recovery still queues because
-  // some files would be missing.
-  const filenames = row.manifest_jsonb.files.map((f) => f.filename);
-  const allPresent = await deps.filesExist(bundleDir, filenames);
-  if (allPresent) return;
+  // under the resolved bundle dir and still matches the manifest.
+  // Refresh-the-page is a no-op rather than a re-download; a missing or
+  // damaged file queues for re-download.
+  const allIntact = await deps.filesIntact(bundleDir, row.manifest_jsonb.files);
+  if (allIntact) return;
 
   const files = row.manifest_jsonb.files.map((f) =>
     MANIFEST_FILE_TO_TRANSFER(f.filename, f.byteSize, bundleDir),

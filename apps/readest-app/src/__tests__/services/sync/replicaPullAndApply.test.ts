@@ -79,10 +79,10 @@ const makeDeps = () => {
     softDeleteByContentId: vi.fn(),
     createBundleDir: vi.fn(async () => 'fresh-bundle-dir-1'),
     queueReplicaDownload: vi.fn(() => 'transfer-id-1'),
-    // Default: no files exist locally, so the orchestrator queues
+    // Default: nothing intact on disk, so the orchestrator queues
     // downloads. Tests that exercise the "binaries already on disk"
     // path override this.
-    filesExist: vi.fn(async () => false),
+    filesIntact: vi.fn(async () => false),
   } satisfies PullAndApplyDeps<ImportedDictionary>;
   return deps;
 };
@@ -234,13 +234,15 @@ describe('replicaPullAndApply (dictionary adapter)', () => {
     const deps = makeDeps();
     (deps.pull as ReturnType<typeof vi.fn>).mockResolvedValue([row]);
     (deps.findByContentId as ReturnType<typeof vi.fn>).mockReturnValue(local);
-    (deps.filesExist as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (deps.filesIntact as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
     await replicaPullAndApply(deps);
 
     expect(deps.createBundleDir).not.toHaveBeenCalled();
     expect(deps.applyRemote).not.toHaveBeenCalled();
-    expect(deps.filesExist).toHaveBeenCalledWith('local-1', ['webster.mdx']);
+    expect(deps.filesIntact).toHaveBeenCalledWith('local-1', [
+      { filename: 'webster.mdx', byteSize: 1, partialMd5: 'x' },
+    ]);
     expect(deps.queueReplicaDownload).not.toHaveBeenCalled();
   });
 
@@ -250,7 +252,7 @@ describe('replicaPullAndApply (dictionary adapter)', () => {
     const deps = makeDeps();
     (deps.pull as ReturnType<typeof vi.fn>).mockResolvedValue([row]);
     (deps.findByContentId as ReturnType<typeof vi.fn>).mockReturnValue(local);
-    // Default filesExist returns false → recovery path.
+    // Default filesIntact returns false → recovery path.
 
     await replicaPullAndApply(deps);
 
@@ -271,7 +273,7 @@ describe('replicaPullAndApply (dictionary adapter)', () => {
     const deps = makeDeps();
     (deps.pull as ReturnType<typeof vi.fn>).mockResolvedValue([row]);
     (deps.findByContentId as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
-    (deps.filesExist as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (deps.filesIntact as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
     await replicaPullAndApply(deps);
 
@@ -464,7 +466,7 @@ describe('replicaPullAndApply credentials category gate (opds adapter)', () => {
       // Metadata-only kind — these are required by the type but unused here.
       createBundleDir: vi.fn(async () => ''),
       queueReplicaDownload: vi.fn(() => null),
-      filesExist: vi.fn(async () => true),
+      filesIntact: vi.fn(async () => true),
     } satisfies PullAndApplyDeps<OPDSCatalog>;
   };
 

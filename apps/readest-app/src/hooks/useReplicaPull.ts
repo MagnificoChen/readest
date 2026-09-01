@@ -39,6 +39,7 @@ import type { ReplicaAdapter } from '@/services/sync/replicaRegistry';
 import { getAccessToken } from '@/utils/access';
 import { isSyncCategoryEnabled } from '@/services/sync/syncCategories';
 import { uniqueId } from '@/utils/misc';
+import { matchesManifest } from '@/services/sync/replicaFileIntegrity';
 import type { EnvConfigType } from '@/services/environment';
 import type { AppService, BaseDir } from '@/types/system';
 import type { ReplicaSyncManager } from '@/services/sync/replicaSyncManager';
@@ -187,10 +188,9 @@ const buildReplicaPullDeps = <T extends ReplicaLocalRecord>(
   },
   queueReplicaDownload: (contentId, displayTitle, files, _bundleDir, base) =>
     transferManager.queueReplicaDownload(config.kind, contentId, displayTitle, files, base),
-  filesExist: async (bundleDir, filenames) => {
-    for (const filename of filenames) {
-      const exists = await service.exists(`${bundleDir}/${filename}`, config.baseDir!);
-      if (!exists) return false;
+  filesIntact: async (bundleDir, files) => {
+    for (const file of files) {
+      if (!(await matchesManifest(service, config.baseDir!, bundleDir, file))) return false;
     }
     return true;
   },
