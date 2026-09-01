@@ -18,8 +18,14 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 
 use read_progress_stream::ReadProgressStream;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::Arc};
+
+/// Parts a ranged download is split into, and how hard each one is retried
+/// before the whole download is failed.
+const PART_CONCURRENCY: usize = 8;
+const PART_RETRIES: u32 = 3;
+const PART_RETRY_BACKOFF: Duration = Duration::from_millis(300);
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -223,12 +229,34 @@ pub async fn download_file(
         }
         file.flush().await?;
 
+        // A stream that ends early yields a short file with no error anywhere:
+        // reqwest surfaces a clean EOF, so without this the caller would treat
+        // a truncated download as a complete one.
+        if total > 0 && stats.total_transferred != total {
+            return Err(Error::ContentLength(format!(
+                "downloaded {} bytes, expected {}",
+                stats.total_transferred, total
+            )));
+        }
+
         Ok(resp_headers)
     }
 
+    /// Unlink a partial file so a failed download never leaves bytes on disk
+    /// that a later "is it already there?" check would accept as complete.
+    async fn discard_on_error<T>(file_path: &str, result: Result<T>) -> Result<T> {
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(file_path).await;
+        }
+        result
+    }
+
     if force_single {
-        return single_threaded_download(&client, url, file_path, &headers, &body, on_progress)
-            .await;
+        return discard_on_error(
+            file_path,
+            single_threaded_download(&client, url, file_path, &headers, &body, on_progress).await,
+        )
+        .await;
     }
 
     // Check if server supports range requests
@@ -259,11 +287,21 @@ pub async fn download_file(
     }
 
     if !accept_ranges || total == 0 {
-        return single_threaded_download(&client, url, file_path, &headers, &body, on_progress)
-            .await;
+        return discard_on_error(
+            file_path,
+            single_threaded_download(&client, url, file_path, &headers, &body, on_progress).await,
+        )
+        .await;
     }
 
-    // Multi-part download with range access
+    // Multi-part download with range access.
+    //
+    // Every part is mandatory: the file is pre-sized with `set_len`, so a part
+    // that is skipped leaves a zero-filled hole inside a file of exactly the
+    // right length. Nothing downstream notices — the transfer reports success
+    // and any size check passes — and the corruption surfaces much later as,
+    // say, a synced CJK font whose later glyphs render blank. A part that still
+    // fails after `PART_RETRIES` attempts therefore fails the whole download.
     let part_count = total.div_ceil(PART_SIZE);
     let file = File::create(file_path).await?;
     file.set_len(total).await?;
@@ -271,8 +309,9 @@ pub async fn download_file(
     let file = Arc::new(tokio::sync::Mutex::new(file));
     let progress = Arc::new(tokio::sync::Mutex::new(TransferStats::default()));
 
-    stream::iter(0..part_count)
-        .for_each_concurrent(8, |i| {
+    let result = stream::iter(0..part_count)
+        .map(Ok::<u64, Error>)
+        .try_for_each_concurrent(PART_CONCURRENCY, |i| {
             let client = client.clone();
             let file = Arc::clone(&file);
             let progress = Arc::clone(&progress);
@@ -283,33 +322,14 @@ pub async fn download_file(
             async move {
                 let start = i * PART_SIZE;
                 let end = min(start + PART_SIZE - 1, total - 1);
-                let range_header = format!("bytes={start}-{end}");
+                let expected = end - start + 1;
 
-                let mut req = client.get(&url).header("Range", range_header);
-                for (key, value) in headers {
-                    req = req.header(key, value);
-                }
-
-                let resp = match req.send().await {
-                    Ok(r) => r,
-                    Err(_) => return,
-                };
-
-                if !resp.status().is_success()
-                    && resp.status() != reqwest::StatusCode::PARTIAL_CONTENT
-                {
-                    return;
-                }
-
-                let bytes = match resp.bytes().await {
-                    Ok(b) => b,
-                    Err(_) => return,
-                };
+                let bytes = fetch_part(&client, &url, &headers, start, end, expected).await?;
 
                 {
                     let mut f = file.lock().await;
-                    f.seek(std::io::SeekFrom::Start(start)).await.unwrap();
-                    f.write_all(&bytes).await.unwrap();
+                    f.seek(std::io::SeekFrom::Start(start)).await?;
+                    f.write_all(&bytes).await?;
                 }
 
                 {
@@ -321,11 +341,93 @@ pub async fn download_file(
                         transfer_speed: stat.transfer_speed,
                     });
                 }
+                Ok(())
             }
         })
         .await;
 
+    // tokio's File queues writes: dropping the handle without flushing can
+    // discard the ones still in flight, which would reintroduce exactly the
+    // hole this path exists to prevent.
+    let outcome = match result {
+        Ok(()) => {
+            let mut f = file.lock().await;
+            f.flush().await.map_err(Error::from)
+        }
+        Err(err) => Err(err),
+    };
+
+    // Close the handle before unlinking — Windows refuses to remove an open
+    // file — and leave nothing behind that a later run would mistake for a
+    // complete download.
+    drop(file);
+    if let Err(err) = outcome {
+        let _ = tokio::fs::remove_file(file_path).await;
+        return Err(err);
+    }
+
     Ok(resp_headers)
+}
+
+/// Fetch one byte range, retrying transient failures. Verifies both that the
+/// server honoured the range (a 200 carries the *whole* body, which written at
+/// the part's offset would corrupt the file) and that it returned exactly as
+/// many bytes as were asked for.
+async fn fetch_part(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &HashMap<String, String>,
+    start: u64,
+    end: u64,
+    expected: u64,
+) -> Result<bytes::Bytes> {
+    let mut last_err: Option<Error> = None;
+
+    for attempt in 0..PART_RETRIES {
+        if attempt > 0 {
+            tokio::time::sleep(PART_RETRY_BACKOFF * attempt).await;
+        }
+
+        let mut req = client
+            .get(url)
+            .header("Range", format!("bytes={start}-{end}"));
+        for (key, value) in headers {
+            req = req.header(key, value);
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(err) => {
+                last_err = Some(err.into());
+                continue;
+            }
+        };
+
+        if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            last_err = Some(Error::HttpErrorCode(status, text));
+            continue;
+        }
+
+        match resp.bytes().await {
+            Ok(bytes) if bytes.len() as u64 == expected => return Ok(bytes),
+            Ok(bytes) => {
+                last_err = Some(Error::ContentLength(format!(
+                    "range bytes={}-{} returned {} bytes, expected {}",
+                    start,
+                    end,
+                    bytes.len(),
+                    expected
+                )));
+            }
+            Err(err) => last_err = Some(err.into()),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        Error::ContentLength(format!("range bytes={start}-{end} could not be fetched"))
+    }))
 }
 
 #[command]
