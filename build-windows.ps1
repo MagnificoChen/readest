@@ -16,12 +16,11 @@
     便携版 exe:   仓库根目录 Readest_<version>_<arch>-portable.exe
 
 .EXAMPLE
-  .\build-windows.ps1                 # x64 NSIS 安装包(默认)
+  .\build-windows.ps1                 # x64 NSIS 安装包(默认), 自动更新已编译期禁用
   .\build-windows.ps1 -Portable       # 同时产出便携版
   .\build-windows.ps1 -Arch arm64     # ARM64(额外需要 clang 与 aarch64 编译目标)
   .\build-windows.ps1 -CheckOnly      # 仅检查环境, 不编译
   .\build-windows.ps1 -SkipDeps       # 跳过依赖准备(重复编译提速)
-  .\build-windows.ps1 -DisableUpdater # 编译期禁用自动更新(设置页不显示"更新"分组)
 
 .NOTES
   执行策略受限时运行:
@@ -33,7 +32,6 @@ param(
     [string]$Arch = 'x64',
     [switch]$Portable,
     [switch]$SkipDeps,
-    [switch]$DisableUpdater,
     [switch]$CheckOnly
 )
 
@@ -231,11 +229,9 @@ if ($SkipDeps) {
 
 # ---------------------------------------------------------------- 编译发布
 $buildStart = Get-Date
-if ($DisableUpdater) {
-    # Next.js 构建期内联进客户端代码: hasUpdater=false, 设置页"更新"分组消失, 启动不再检查更新
-    $env:NEXT_PUBLIC_DISABLE_UPDATER = 'true'
-    Write-Host "`n[开关] 编译期禁用自动更新(NEXT_PUBLIC_DISABLE_UPDATER)" -ForegroundColor Yellow
-}
+# Next.js 构建期内联进客户端代码: hasUpdater=false, 设置页"更新"分组消失, 启动不再检查更新。
+# 本地自编译无 .sig 签名文件, 更新包安装必然失败, 故无条件禁用。
+$env:NEXT_PUBLIC_DISABLE_UPDATER = 'true'
 Write-Host "`n==== 编译 NSIS 安装包 ($Arch) ====" -ForegroundColor Cyan
 Invoke-Checked "tauri build --target $rustTarget" 'pnpm' @('tauri', 'build', '--target', $rustTarget, '--bundles', 'nsis')
 

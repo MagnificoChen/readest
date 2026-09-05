@@ -19,18 +19,18 @@
   NDK 优先级: NDK_HOME -> SDK\ndk 下最新版本。
 
   产物位置:
-    APK: 仓库根目录 Readest_<version>_universal.apk (或 Readest_<version>_aarch64.apk)
+    APK: 仓库根目录 Readest_<version>_aarch64.apk (或 Readest_<version>_universal.apk)
 
 .EXAMPLE
-  .\build-android.ps1                 # universal APK(含全部 4 种 abi, 任何手机可装)
-  .\build-android.ps1 -Target aarch64 # 仅 arm64 APK(现代手机, 体积更小)
-  .\build-android.ps1 -CheckOnly      # 仅检查环境, 不编译
-  .\build-android.ps1 -SkipDeps       # 跳过依赖准备(重复编译提速)
-  .\build-android.ps1 -DisableUpdater # 编译期禁用自动更新(设置页不显示"更新"分组)
+  .\build-android.ps1                   # arm64 APK(现代手机, 默认), 自动更新已编译期禁用
+  .\build-android.ps1 -Target universal # 全部 4 种 abi APK(任何手机可装, 编译明显更慢)
+  .\build-android.ps1 -CheckOnly        # 仅检查环境, 不编译
+  .\build-android.ps1 -SkipDeps         # 跳过依赖准备(重复编译提速)
 
 .NOTES
-  首次构建需下载 gradle 发行版与全部 maven 依赖, 且 4 个 Android 目标的 Rust
-  crate 需全量编译(universal 模式), 总时长可能超过 30 分钟, 属正常现象。
+  首次构建需下载 gradle 发行版与全部 maven 依赖; arm64 默认只编译 1 个 Rust
+  目标, 总时长约 15-25 分钟; universal 模式需全量编译 4 个 Android 目标,
+  可能超过 30 分钟, 属正常现象。
   安装到手机: 数据线连接后 `adb install -r <apk>`, 或把 APK 传到手机直接安装。
   iOS 无法在 Windows 上构建(需 macOS + Xcode)。
   执行策略受限时运行:
@@ -39,9 +39,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('universal', 'aarch64')]
-    [string]$Target = 'universal',
+    [string]$Target = 'aarch64',
     [switch]$SkipDeps,
-    [switch]$DisableUpdater,
     [switch]$CheckOnly
 )
 
@@ -236,11 +235,9 @@ $env:NDK_HOME = $ndkHome
 # 保证每次 init 后路径有效, 也免去手工设置环境变量。
 $projCargoHome = Join-Path $PSScriptRoot '.cargo-home'
 if (Test-Path $projCargoHome) { $env:CARGO_HOME = $projCargoHome }
-if ($DisableUpdater) {
-    # Next.js 构建期内联进客户端代码: hasUpdater=false, 设置页"更新"分组消失, 启动不再检查更新
-    $env:NEXT_PUBLIC_DISABLE_UPDATER = 'true'
-    Write-Host "`n[开关] 编译期禁用自动更新(NEXT_PUBLIC_DISABLE_UPDATER)" -ForegroundColor Yellow
-}
+# Next.js 构建期内联进客户端代码: hasUpdater=false, 设置页"更新"分组消失, 启动不再检查更新。
+# 本地自编译无 .sig 签名文件, 更新包安装必然失败, 故无条件禁用。
+$env:NEXT_PUBLIC_DISABLE_UPDATER = 'true'
 
 # ---------------------------------------------------------------- gen/android 工程重建(官方 CI 流程)
 $appDir = Join-Path $PSScriptRoot 'apps\readest-app'

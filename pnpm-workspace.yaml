@@ -5,6 +5,10 @@ packages:
   - apps/readest-app/extensions/*
   - packages/foliate-js
 
+# 默认 store(D:\.pnpm-store)在受限环境不可写, SQLite 索引打不开导致
+# ERR_SQLITE_ERROR; 固定到项目内(已 .gitignore), 与构建脚本的 --store-dir 回退一致。
+storeDir: D:/Downloads/Readest/readest/.pnpm-store
+
 allowBuilds:
   '@sentry/cli': true
   core-js: true
