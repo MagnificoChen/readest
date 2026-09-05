@@ -48,8 +48,9 @@ export class ReaderPage extends BasePage {
     this.dictionaryPopup = page.locator('.popup-container:has([data-testid="dict-title"])');
     this.translatorPopup = page.locator('.popup-container:has(h1:text-is("Original Text"))');
     this.proofreadPopup = page.locator('.popup-container:has-text("Selected text:")');
-    // Attached notes are written in the left Annotations panel: Annotate drops
-    // the new annotation straight into BooknoteItem's inline editor.
+    // Annotate opens the note editor on the selection itself — inside the
+    // toolbar popup at desktop widths, in a bottom sheet on phones. The
+    // sidebar's own inline editor shares the test id; only one is ever open.
     this.noteEditor = page.locator('[data-testid="booknote-note-editor"]');
     this.annotationItems = page.locator('li.booknote-item[role="button"]');
     // The app-drawn range-edit handles (the selection / annotation range
@@ -345,6 +346,19 @@ export class ReaderPage extends BasePage {
     throw new Error('no visible book section found in the viewer');
   }
 
+  /** Press one of the reader's zoom shortcuts. */
+  async pressZoomShortcut(key: '=' | '-' | '0'): Promise<void> {
+    await this.page.keyboard.press(`Control+${key}`);
+  }
+
+  /** The px font size the book text is currently rendered at. */
+  async bookFontSize(): Promise<number> {
+    const frame = await this.visibleSectionFrame();
+    return frame
+      .locator('body')
+      .evaluate((body) => Number.parseFloat(getComputedStyle(body).fontSize));
+  }
+
   /**
    * Select a paragraph of book text and raise the annotation popup.
    *
@@ -451,9 +465,14 @@ export class ReaderPage extends BasePage {
     await this.page.getByRole('menuitem', { name: `Instant ${action}` }).click();
   }
 
-  /** A tool button inside the annotation popup, by its accessible name. */
+  /**
+   * A tool button inside the annotation popup, by its accessible name. The
+   * match is exact for string names: the highlight style/color strip shows
+   * alongside the toolbar since #5983, and its "Select highlight style"
+   * button would also answer to a substring match on 'Highlight'.
+   */
   popupTool(name: string | RegExp): Locator {
-    return this.annotationPopup.getByRole('button', { name });
+    return this.annotationPopup.getByRole('button', { name, exact: typeof name === 'string' });
   }
 
   async highlightSelection(): Promise<void> {
