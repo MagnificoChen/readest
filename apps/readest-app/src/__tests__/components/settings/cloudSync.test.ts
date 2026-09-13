@@ -12,6 +12,11 @@ import {
 import { useSettingsStore } from '@/store/settingsStore';
 import { broadcastGlobalSettings } from '@/utils/settingsSync';
 import { CLOUD_SYNC_REQUIRES_PREMIUM, isCloudSyncAllowed, isCloudSyncInPlan } from '@/utils/access';
+import { getActiveFileSyncBackends, resolveCloudSyncGate } from '@/services/sync/cloudSyncProvider';
+import {
+  canToggleCloudProvider,
+  shouldShowCloudProviderBadge,
+} from '@/components/settings/integrations/cloudSyncStatus';
 import type { SystemSettings } from '@/types/settings';
 import type { EnvConfigType } from '@/services/environment';
 
@@ -30,13 +35,43 @@ describe('isCloudSyncInPlan', () => {
   });
 });
 
-describe('isCloudSyncAllowed (premium paywall)', () => {
-  test('third-party cloud sync requires a paid plan', () => {
-    expect(CLOUD_SYNC_REQUIRES_PREMIUM).toBe(true);
-    expect(isCloudSyncAllowed('free', false)).toBe(false);
+describe('isCloudSyncAllowed (local fork)', () => {
+  test('third-party cloud sync is available without a paid plan', () => {
+    expect(CLOUD_SYNC_REQUIRES_PREMIUM).toBe(false);
+    expect(isCloudSyncAllowed('free', false)).toBe(true);
     expect(isCloudSyncAllowed('plus', false)).toBe(true);
     expect(isCloudSyncAllowed('pro', false)).toBe(true);
-    expect(isCloudSyncAllowed('purchase', false)).toBe(false);
+    expect(isCloudSyncAllowed('purchase', false)).toBe(true);
+  });
+
+  test.each(['free', 'purchase'] as const)('keeps every selected backend active for %s', (plan) => {
+    const settings = {
+      readestCloud: { enabled: false },
+      webdav: { enabled: true },
+      googleDrive: { enabled: true },
+      s3: { enabled: true },
+      onedrive: { enabled: true },
+      icloud: { enabled: true },
+    } as SystemSettings;
+    const backends = ['webdav', 'gdrive', 's3', 'onedrive', 'icloud'];
+
+    expect(resolveCloudSyncGate(settings, plan, false)).toEqual({
+      readest: false,
+      backends,
+      paused: false,
+    });
+    expect(getActiveFileSyncBackends(settings, plan)).toEqual(backends);
+  });
+
+  test.each([
+    { signedIn: false, planLoading: false },
+    { signedIn: true, planLoading: false },
+    { signedIn: true, planLoading: true },
+  ])('keeps provider controls ungated with account state %j', (account) => {
+    const isPremium = isCloudSyncAllowed('free', false);
+
+    expect(shouldShowCloudProviderBadge({ ...account, isPremium })).toBe(false);
+    expect(canToggleCloudProvider({ isPremium, isConfigured: true, isEnabled: false })).toBe(true);
   });
 });
 
@@ -289,7 +324,8 @@ describe('isCloudSyncAllowed — customization unlock', () => {
     expect(isCloudSyncAllowed('purchase', true)).toBe(true);
   });
 
-  test('does not entitle a storage-only buyer after the grace period', () => {
-    expect(isCloudSyncAllowed('purchase', false)).toBe(false);
+  test('allows a storage-only buyer to sync without granting premium plan eligibility', () => {
+    expect(isCloudSyncAllowed('purchase', false)).toBe(true);
+    expect(isCloudSyncInPlan('purchase', false)).toBe(false);
   });
 });

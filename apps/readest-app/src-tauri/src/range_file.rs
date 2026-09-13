@@ -244,24 +244,33 @@ mod tests {
 
     #[test]
     fn safe_path_accepts_absolute_traversal_free() {
-        assert!(is_safe_path(Path::new(
+        assert!(is_safe_path(&platform_absolute_path(
             "/data/user/0/com.bilingify.readest/Readest/Books/a.epub"
         )));
-        assert!(is_safe_path(Path::new("/书/堂吉诃德.mobi")));
+        assert!(is_safe_path(&platform_absolute_path("/书/堂吉诃德.mobi")));
     }
 
     #[test]
     fn safe_path_rejects_parent_dir_traversal() {
-        assert!(!is_safe_path(Path::new(
+        assert!(!is_safe_path(&platform_absolute_path(
             "/data/user/0/com.bilingify.readest/Readest/../../../../etc/passwd"
         )));
-        assert!(!is_safe_path(Path::new("/a/../b")));
+        assert!(!is_safe_path(&platform_absolute_path("/a/../b")));
     }
 
     #[test]
     fn safe_path_rejects_relative_and_nul() {
         assert!(!is_safe_path(Path::new("data/x/a.epub"))); // not absolute
         assert!(!is_safe_path(Path::new("a.epub")));
-        assert!(!is_safe_path(Path::new("/data/a\0b.epub"))); // NUL byte
+        assert!(!is_safe_path(&platform_absolute_path("/data/a\0b.epub"))); // NUL byte
+    }
+
+    // Windows needs a drive prefix so these cases exercise traversal/NUL checks too.
+    fn platform_absolute_path(path: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!("C:{path}"))
+        } else {
+            PathBuf::from(path)
+        }
     }
 }
